@@ -1,0 +1,1187 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Play, Pause, Thermometer, FlaskConical, Wind, History, Trash2, Timer, Settings, BarChart3, Droplets, RefreshCw, Zap, FastForward, AlertCircle, Globe, Layers, CheckSquare, Square, X, RotateCw, Scale, Download } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+
+export default function ReactionRateLab() {
+  // --- 語言設定 ---
+  const [lang, setLang] = useState('zh');
+
+  const translations = {
+    zh: {
+      appTitle: "反應速率實驗室：氫氯酸 + 制酸劑藥片（主要成分：碳酸鈣）",
+      designParams: "實驗變因",
+      initialMass: "藥片質量 (固定)",
+      temperature: "起始溫度",
+      acidVol: "氫氯酸體積",
+      acidConc: "氫氯酸濃度",
+      surfaceArea: "藥片磨碎程度 (表面積)",
+      stirringSpeed: "攪拌速度",
+      rpm: "轉/分 (rpm)",
+      simSpeed: "模擬速度",
+      reset: "重設",
+      start: "開始反應",
+      stop: "停止",
+      resetFirst: "請先重設",
+      reactionCurve: "反應曲線",
+      timeAxis: "時間 (s)",
+      massAxis: "剩餘藥片質量 (g)",
+      concAxis: "濃度 HCl (M)",
+      tempAxis: "溫度 (°C)",
+      remaining: "剩餘",
+      finished: "反應結束",
+      progress: "反應進度",
+      history: "實驗紀錄 (勾選以比較)",
+      clearAll: "全部清除",
+      confirmClear: "確定清除?",
+      noRecords: "尚無紀錄",
+      colCount: "次數",
+      colTemp: "溫度",
+      colVol: "體積", 
+      colConc: "濃度",
+      colArea: "表面積",
+      colStir: "攪拌",
+      colTime: "時間",
+      colRate: "平均速率", 
+      colSelect: "比較",
+      colAction: "刪除",
+      yes: "有",
+      no: "無",
+      currentRun: "目前實驗",
+      trial: "實驗",
+      btnMass: "質量",
+      btnConc: "濃度",
+      btnTemp: "溫度",
+      exportCSV: "導出 CSV" // 新增翻譯
+    },
+    en: {
+      appTitle: "Reaction Rate Lab: HCl + Antacid Tablet (CaCO₃)",
+      designParams: "Parameters",
+      initialMass: "Tablet Mass (Fixed)",
+      temperature: "Temperature",
+      acidVol: "HCl Volume",
+      acidConc: "HCl Concentration",
+      surfaceArea: "Tablet Crushing (Surface Area)",
+      stirringSpeed: "Stirring Speed",
+      rpm: "rpm",
+      simSpeed: "Sim Speed",
+      reset: "Reset",
+      start: "Start",
+      stop: "Stop",
+      resetFirst: "Reset First",
+      reactionCurve: "Reaction Curve",
+      timeAxis: "Time (s)",
+      massAxis: "Remaining Tablet (g)",
+      concAxis: "Conc. HCl (M)",
+      tempAxis: "Temp (°C)",
+      remaining: "Remaining",
+      finished: "Done",
+      progress: "Progress",
+      history: "History (Select to Compare)",
+      clearAll: "Clear All",
+      confirmClear: "Confirm?",
+      noRecords: "No records yet",
+      colCount: "Trial",
+      colTemp: "Temp",
+      colVol: "Vol", 
+      colConc: "Conc",
+      colArea: "Area",
+      colStir: "Stir",
+      colTime: "Time",
+      colRate: "Avg Rate",
+      colSelect: "Compare",
+      colAction: "Del",
+      yes: "Yes",
+      no: "No",
+      currentRun: "Current Run",
+      trial: "Trial",
+      btnMass: "Mass",
+      btnConc: "Conc.",
+      btnTemp: "Temp.",
+      exportCSV: "Export CSV" // 新增翻譯
+    }
+  };
+
+  const t = (key) => translations[lang][key];
+
+  // --- 狀態管理 ---
+  const INITIAL_MASS = 5.0; 
+
+  const [temperature, setTemperature] = useState(25); 
+  const [acidVolume, setAcidVolume] = useState(100); 
+  const [acidConcentration, setAcidConcentration] = useState(1.0); 
+  const [surfaceArea, setSurfaceArea] = useState(20); 
+  
+  // 攪拌速度 (0-500 rpm)
+  const [stirringSpeed, setStirringSpeed] = useState(0); 
+  
+  const [speed, setSpeed] = useState(1);
+
+  const [isRunning, setIsRunning] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [reactedAmount, setReactedAmount] = useState(0); 
+  const [simulationData, setSimulationData] = useState([]);
+  const [finalTime, setFinalTime] = useState(null);
+
+  // 圖表顯示控制
+  const [graphType, setGraphType] = useState('mass'); // 'mass', 'conc', 'temp'
+  
+  // 多選比較功能
+  const [selectedHistoryIds, setSelectedHistoryIds] = useState([]);
+
+  // 氣泡系統專用狀態
+  const [bubbles, setBubbles] = useState([]);
+  const bubbleIdCounter = useRef(0);
+  const rateRef = useRef(0); 
+  
+  // 隨機誤差因子 (Random Error Factor)
+  const randomErrorRef = useRef(1.0);
+
+  const [history, setHistory] = useState([]);
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  const intervalRef = useRef(null);
+  const bubbleIntervalRef = useRef(null);
+  const confirmTimeoutRef = useRef(null); 
+
+  const isFinished = !isRunning && finalTime !== null;
+  const hasStarted = simulationData.length > 0;
+
+  // 比較用的顏色庫
+  const COMPARE_COLORS = [
+    '#ea580c', // Orange
+    '#0891b2', // Cyan
+    '#db2777', // Pink
+    '#65a30d', // Lime
+    '#7c3aed', // Violet
+    '#059669', // Emerald
+  ];
+
+  // --- 抑制 ResizeObserver 錯誤 ---
+  useEffect(() => {
+    const originalError = console.error;
+    console.error = (...args) => {
+      if (/ResizeObserver loop completed with undelivered notifications/.test(args[0])) {
+        return;
+      }
+      originalError.call(console, ...args);
+    };
+    return () => {
+      console.error = originalError;
+    };
+  }, []);
+
+  // --- 化學反應速率計算 (含隨機誤差) ---
+  const calculateInstantRate = (currentReacted) => {
+    let k = 0.05; 
+    const tempFactor = Math.pow(1.8, (temperature - 20) / 10); 
+    const concFactor = Math.pow(acidConcentration, 1.5);
+    
+    // 攪拌因子
+    const stirFactor = 1.0 + (Math.log10(stirringSpeed + 1) / Math.log10(501)) * 1.5;
+
+    const areaFactor = 1.0 + (surfaceArea / 100) * 4.0;
+    const remainingRatio = (INITIAL_MASS - currentReacted) / INITIAL_MASS;
+    const surfaceFactor = Math.max(0.0, Math.pow(remainingRatio, 0.66)); 
+
+    // 應用隨機誤差因子
+    return k * tempFactor * concFactor * stirFactor * areaFactor * surfaceFactor * randomErrorRef.current;
+  };
+
+  // --- 計算當前濃度 ---
+  const calculateCurrentConcentration = (reactedMass) => {
+    const molesCaCO3Reacted = reactedMass / 100.09;
+    const molesHClConsumed = molesCaCO3Reacted * 2;
+    const initialMolesHCl = (acidVolume / 1000) * acidConcentration;
+    const remainingMolesHCl = Math.max(0, initialMolesHCl - molesHClConsumed);
+    return remainingMolesHCl / (acidVolume / 1000);
+  };
+
+  // --- 主模擬迴圈 (Physics Loop) ---
+  useEffect(() => {
+    if (isRunning) {
+      intervalRef.current = setInterval(() => {
+        const timeStep = 0.1 * speed;
+
+        setCurrentTime((prevTime) => {
+          const newTime = prevTime + timeStep; 
+          
+          setReactedAmount((prevReacted) => {
+             const instantRate = calculateInstantRate(prevReacted);
+             rateRef.current = instantRate;
+
+             let stepReact = instantRate * timeStep;
+             let newReacted = prevReacted + stepReact;
+
+             if (newReacted >= INITIAL_MASS) {
+               newReacted = INITIAL_MASS;
+               finishSimulation(newTime);
+             } else {
+                 const recordInterval = speed >= 5 ? 1.0 : 0.2; 
+                 if (Math.abs(newTime % recordInterval) < timeStep) {
+                    const currentConc = calculateCurrentConcentration(newReacted);
+                    const noise = (Math.random() - 0.5) * 0.2;
+                    const tempRise = (newReacted / INITIAL_MASS) * 2.5; 
+                    
+                    setSimulationData(prevData => [
+                        ...prevData, 
+                        { 
+                          time: parseFloat(newTime.toFixed(1)), 
+                          remaining: parseFloat(Math.max(0, INITIAL_MASS - newReacted).toFixed(2)),
+                          conc: parseFloat(currentConc.toFixed(3)),
+                          temp: parseFloat((temperature + tempRise + noise).toFixed(1))
+                        }
+                    ]);
+                 }
+             }
+             return newReacted;
+          });
+          return newTime;
+        });
+      }, 100); 
+    } else {
+        rateRef.current = 0; 
+    }
+    return () => clearInterval(intervalRef.current);
+  }, [isRunning, INITIAL_MASS, temperature, acidVolume, acidConcentration, surfaceArea, stirringSpeed, speed]);
+
+  // --- 氣泡生成系統 ---
+  useEffect(() => {
+    if (isRunning) {
+        bubbleIntervalRef.current = setInterval(() => {
+            const currentRate = rateRef.current;
+            if (currentRate <= 0) return;
+
+            const baseSpawnRate = currentRate * 5; 
+            const spawnCount = Math.floor(baseSpawnRate) + (Math.random() < (baseSpawnRate % 1) ? 1 : 0);
+            const MAX_BUBBLES = 150;
+
+            if (spawnCount > 0) {
+                setBubbles(prev => {
+                    const now = Date.now();
+                    const cleanPrev = prev.filter(b => now - b.createdAt < 3000); 
+                    if (cleanPrev.length > MAX_BUBBLES) return cleanPrev;
+
+                    const newBubbles = [];
+                    for (let i = 0; i < spawnCount; i++) {
+                        bubbleIdCounter.current += 1;
+                        const size = 6 + Math.random() * 10; 
+                        const duration = (2.0 + Math.random()) * (10 / size) / Math.sqrt(speed); 
+                        
+                        // 攪拌對氣泡路徑的影響
+                        const stirEffectX = (stirringSpeed / 500) * 100 * (Math.random() - 0.5);
+
+                        newBubbles.push({
+                            id: bubbleIdCounter.current,
+                            createdAt: now,
+                            left: 5 + Math.random() * 90, 
+                            size: size,
+                            duration: duration,
+                            delay: Math.random() * 0.2, 
+                            wiggle: (Math.random() - 0.5) * 40 + stirEffectX,
+                            opacity: 0.4 + Math.random() * 0.5
+                        });
+                    }
+                    return [...cleanPrev, ...newBubbles];
+                });
+            } else {
+                setBubbles(prev => {
+                    const now = Date.now();
+                    if (prev.length > 0 && now - prev[0].createdAt > 3000) {
+                         return prev.filter(b => now - b.createdAt < 3000);
+                    }
+                    return prev;
+                });
+            }
+
+        }, 50);
+    } else {
+        setBubbles([]);
+    }
+
+    return () => clearInterval(bubbleIntervalRef.current);
+  }, [isRunning, speed, stirringSpeed]);
+
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimeoutRef.current) clearTimeout(confirmTimeoutRef.current);
+    };
+  }, []);
+
+  const startSimulation = () => {
+    if (isRunning) return;
+    if (isFinished) return; 
+    
+    // 初始化數據
+    if (simulationData.length === 0) {
+        randomErrorRef.current = 0.95 + Math.random() * 0.10;
+        
+        setSimulationData([{ 
+            time: 0, 
+            remaining: INITIAL_MASS,
+            conc: acidConcentration,
+            temp: temperature
+        }]);
+    }
+    
+    setIsRunning(true);
+  };
+
+  const stopSimulation = () => {
+    clearInterval(intervalRef.current);
+    clearInterval(bubbleIntervalRef.current);
+    setIsRunning(false);
+  };
+
+  const finishSimulation = (endTime) => {
+    clearInterval(intervalRef.current);
+    clearInterval(bubbleIntervalRef.current);
+    setIsRunning(false);
+    setFinalTime(endTime);
+    
+    const finalConc = calculateCurrentConcentration(INITIAL_MASS);
+    const finalTemp = temperature + 2.5; 
+
+    const finalDataPoint = { 
+        time: parseFloat(endTime.toFixed(1)), 
+        remaining: 0,
+        conc: parseFloat(finalConc.toFixed(3)),
+        temp: parseFloat(finalTemp.toFixed(1))
+    };
+
+    setSimulationData(prev => {
+        const newData = [...prev, finalDataPoint];
+        
+        // 儲存至歷史紀錄
+        setHistory(hPrev => [{
+            id: Date.now(),
+            count: hPrev.length + 1,
+            temp: temperature,
+            vol: acidVolume, 
+            conc: acidConcentration,
+            area: surfaceArea, 
+            stir: stirringSpeed, 
+            time: endTime.toFixed(1),
+            fullData: newData, // 儲存完整數據以供後續計算不同速率
+            errorFactor: randomErrorRef.current
+        }, ...hPrev]);
+
+        return newData;
+    });
+  };
+
+  const resetSimulation = () => {
+    clearInterval(intervalRef.current);
+    clearInterval(bubbleIntervalRef.current);
+    setIsRunning(false);
+    setCurrentTime(0);
+    setReactedAmount(0);
+    setSimulationData([]);
+    setBubbles([]);
+    setFinalTime(null);
+  };
+
+  const deleteHistoryItem = (id, e) => {
+    e.stopPropagation();
+    setHistory(prev => prev.filter(item => item.id !== id));
+    setSelectedHistoryIds(prev => prev.filter(sid => sid !== id));
+  };
+
+  const toggleHistorySelection = (id) => {
+      setSelectedHistoryIds(prev => {
+          if (prev.includes(id)) return prev.filter(sid => sid !== id);
+          return [...prev, id];
+      });
+  };
+
+  const handleClearAllClick = () => {
+    if (confirmClear) {
+      setHistory([]);
+      setSelectedHistoryIds([]);
+      setConfirmClear(false);
+      if (confirmTimeoutRef.current) clearTimeout(confirmTimeoutRef.current);
+    } else {
+      setConfirmClear(true);
+      confirmTimeoutRef.current = setTimeout(() => {
+        setConfirmClear(false);
+      }, 3000);
+    }
+  };
+
+  // --- 導出 CSV 功能 ---
+  const exportToCSV = () => {
+    if (history.length === 0) return;
+
+    // 定義 CSV 表頭
+    const headers = [
+      t('colCount'),
+      t('colTemp') + " (°C)",
+      t('colVol') + " (ml)",
+      t('colConc') + " (M)",
+      t('colArea') + " (cm²/g)",
+      t('colStir') + " (rpm)",
+      t('colTime') + " (s)",
+      t('colRate') + " (g/s)"
+    ];
+
+    // 轉換數據行
+    const rows = history.map(item => {
+      const duration = parseFloat(item.time);
+      const rate = duration > 0 ? (INITIAL_MASS / duration).toFixed(4) : "0";
+      
+      return [
+        item.count,
+        item.temp,
+        item.vol,
+        item.conc,
+        item.area,
+        item.stir,
+        item.time,
+        rate
+      ];
+    });
+
+    // 組合 CSV 內容
+    // \uFEFF 是 BOM (Byte Order Mark)，讓 Excel 能正確識別 UTF-8 編碼的中文
+    const csvContent = "\uFEFF" + [
+      headers.join(","),
+      ...rows.map(r => r.join(","))
+    ].join("\n");
+
+    // 建立下載連結
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `reaction_lab_data_${new Date().toISOString().slice(0,10)}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // --- 決定圖表 Y 軸設定 ---
+  const getGraphConfig = () => {
+      switch(graphType) {
+          case 'conc':
+              return {
+                  dataKey: 'conc',
+                  label: t('concAxis'),
+                  domain: [0, 3.0],
+                  unit: 'M'
+              };
+          case 'temp':
+              return {
+                  dataKey: 'temp',
+                  label: t('tempAxis'),
+                  domain: ['dataMin - 2', 'dataMax + 2'],
+                  unit: '°C'
+              };
+          case 'mass':
+          default:
+              return {
+                  dataKey: 'remaining',
+                  label: t('massAxis'),
+                  domain: [0, INITIAL_MASS],
+                  unit: 'g'
+              };
+      }
+  };
+
+  const graphConfig = getGraphConfig();
+
+  // --- 計算並格式化要在表格中顯示的速率 ---
+  const getRateDisplay = (record) => {
+    const duration = parseFloat(record.time);
+    if (!duration || duration === 0) return "-";
+
+    if (graphType === 'conc') {
+        const finalConc = record.fullData[record.fullData.length - 1]?.conc || 0;
+        const rate = (record.conc - finalConc) / duration;
+        return (
+            <>
+                {rate.toFixed(4)} <span className="text-[9px] text-slate-400 font-normal">M/s</span>
+            </>
+        );
+    } else if (graphType === 'temp') {
+        const finalTemp = record.fullData[record.fullData.length - 1]?.temp || record.temp;
+        const rate = (finalTemp - record.temp) / duration;
+        return (
+            <>
+                {rate.toFixed(3)} <span className="text-[9px] text-slate-400 font-normal">°C/s</span>
+            </>
+        );
+    } else {
+        const rate = INITIAL_MASS / duration;
+         return (
+            <>
+                {rate.toFixed(3)} <span className="text-[9px] text-slate-400 font-normal">g/s</span>
+            </>
+        );
+    }
+  };
+
+  // --- 格式化剩餘質量顯示 ---
+  const getFormattedMass = () => {
+    const remaining = INITIAL_MASS - reactedAmount;
+    if (remaining <= 0) return "0.00";
+    if (remaining < 0.01) return "< 0.01";
+    return remaining.toFixed(2);
+  };
+
+
+  // --- 視覺渲染 (液體與粒子) ---
+  const getLiquidColor = () => {
+    const opacity = 0.15 + (acidConcentration / 3.0) * 0.25;
+    return `rgba(180, 215, 250, ${opacity})`;
+  };
+
+  const getLiquidHeight = () => {
+    const minHeight = 40;
+    const maxHeight = 90;
+    const percentage = minHeight + ((acidVolume - 50) / 150) * (maxHeight - minHeight);
+    return `${percentage}%`;
+  };
+
+  const renderParticles = () => {
+    const remainingRatio = Math.max(0, (INITIAL_MASS - reactedAmount) / INITIAL_MASS);
+    if (remainingRatio <= 0) return null;
+
+    const baseCount = 40;
+    const maxCount = 200;
+    const totalParticles = Math.floor(baseCount + (surfaceArea / 100) * (maxCount - baseCount));
+    const currentParticles = Math.ceil(totalParticles * remainingRatio);
+    
+    const maxSize = 10;
+    const minSize = 2;
+    let baseParticleSize = Math.max(minSize, maxSize - (surfaceArea / 100) * (maxSize - minSize));
+    baseParticleSize = baseParticleSize * (0.5 + 0.5 * remainingRatio);
+
+    const particles = [];
+    const seededRandom = (seed) => {
+        const x = Math.sin(seed++) * 10000;
+        return x - Math.floor(x);
+    };
+
+    for (let i = 0; i < currentParticles; i++) {
+      const borderRadius = surfaceArea > 80 ? '50%' : '2px';
+      const randomX = seededRandom(i * 13);
+      const baseLeft = 10 + randomX * 80; 
+      const randomY = seededRandom(i * 7);
+      const stackHeight = 20; 
+      const normalizedIndex = i / totalParticles; 
+      const heightOffset = (randomY * 0.4 + normalizedIndex * 0.6) * stackHeight;
+      const baseTop = 94 - heightOffset; 
+
+      let animationStyle = {};
+      
+      // 根據 rpm 決定是否 swirl
+      if (isRunning && stirringSpeed > 0) {
+        const radius = 20 + seededRandom(i) * 50; 
+        const speedFactor = 1 + (temperature / 100) * 0.5;
+        const visualSpeed = Math.min(speed, 3);
+        // 攪拌越快，粒子旋轉越快
+        const rpmFactor = stirringSpeed / 200; 
+        const duration = ((1.2 + seededRandom(i * 2) * 1.5) / speedFactor) / (visualSpeed * rpmFactor); 
+        const delay = seededRandom(i * 3) * -5; 
+        
+        animationStyle = {
+            animation: `swirl ${Math.max(0.2, duration)}s linear infinite`,
+            animationDelay: `${delay}s`,
+            '--swirl-radius': `${radius}px`,
+            '--swirl-y': `${(seededRandom(i*4) - 0.5) * 80}px`,
+            transformBox: 'fill-box',
+            left: '50%', 
+            top: '55%',
+        };
+      } else {
+        animationStyle = {
+            left: `${baseLeft}%`,
+            top: `${baseTop}%`,
+            transition: `all ${0.8 / speed}s ease-out` 
+        };
+      }
+
+      particles.push(
+        <div 
+            key={i} 
+            className="absolute shadow-sm bg-stone-100 border border-stone-300"
+            style={{
+                ...animationStyle,
+                width: `${baseParticleSize}px`,
+                height: `${baseParticleSize}px`,
+                borderRadius: borderRadius,
+                opacity: 0.9, 
+                transform: surfaceArea < 50 ? `rotate(${seededRandom(i)*360}deg)` : 'none'
+            }} 
+        />
+      );
+    }
+    return particles;
+  };
+
+  return (
+    <div className="h-screen bg-[#F5F7FF] text-slate-800 font-sans flex flex-col overflow-hidden">
+      
+      {/* 頂部標題列 */}
+      <header className="bg-white border-b border-indigo-100 px-4 py-2 flex justify-between items-center shrink-0 h-12 shadow-sm z-20">
+        <div className="flex items-center gap-2 overflow-hidden">
+          <div className="bg-gradient-to-br from-indigo-500 to-blue-600 text-white p-1 rounded-md shadow-sm shrink-0">
+            <FlaskConical className="w-4 h-4" />
+          </div>
+          <h1 className="text-base font-bold text-slate-700 tracking-tight truncate">{t('appTitle')}</h1>
+        </div>
+
+        <button 
+          onClick={() => setLang(l => l === 'zh' ? 'en' : 'zh')}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold transition-colors shrink-0"
+        >
+          <Globe className="w-3.5 h-3.5" />
+          {lang === 'zh' ? 'English' : '繁體中文'}
+        </button>
+      </header>
+
+      {/* 主要內容區 Grid */}
+      <main className="flex-1 p-3 grid grid-cols-12 gap-3 min-h-0 bg-[#F5F7FF]">
+        
+        {/* 左側：設計參數 */}
+        <div className="col-span-3 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col h-full overflow-hidden ring-1 ring-slate-100">
+          <div className="px-3 py-2 border-b border-slate-100 flex items-center gap-2 bg-slate-50/80 shrink-0">
+            <Settings className="w-3.5 h-3.5 text-indigo-600" />
+            <h2 className="font-bold text-sm text-slate-700">{t('designParams')}</h2>
+          </div>
+          
+          <div className="p-3 flex-1 flex flex-col justify-evenly min-h-0 overflow-y-auto">
+            
+            {/* 初始質量顯示 (固定) */}
+            <div className="space-y-1">
+              <div className="flex justify-between items-center">
+                <label className="text-xs font-bold text-slate-500 flex items-center gap-1">
+                  <Scale className="w-3 h-3"/> {t('initialMass')}
+                </label>
+                <span className="text-sm font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md">
+                  {INITIAL_MASS.toFixed(1)}g
+                </span>
+              </div>
+            </div>
+
+            {/* 明顯的分割線 */}
+            <div className="h-px bg-slate-300 my-3"></div>
+
+            {/* 溫度拉桿 */}
+            <div className="space-y-1">
+              <div className="flex justify-between items-center">
+                <label className="text-xs font-bold text-slate-500 flex items-center gap-1">
+                  <Thermometer className="w-3 h-3"/> {t('temperature')}
+                </label>
+                <span className={`text-sm font-bold ${hasStarted ? 'text-slate-400' : 'text-red-500'}`}>{temperature}°C</span>
+              </div>
+              <input 
+                type="range" min="20" max="80" step="5" value={temperature} 
+                onChange={(e) => setTemperature(parseInt(e.target.value))}
+                disabled={hasStarted}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-red-500 hover:accent-red-600 transition-all disabled:opacity-50"
+              />
+            </div>
+
+            {/* 酸體積拉桿 */}
+            <div className="space-y-1">
+              <div className="flex justify-between items-center">
+                <label className="text-xs font-bold text-slate-500 flex items-center gap-1">
+                  <Droplets className="w-3 h-3"/> {t('acidVol')}
+                </label>
+                <span className={`text-sm font-bold ${hasStarted ? 'text-slate-400' : 'text-blue-500'}`}>{acidVolume}ml</span>
+              </div>
+              <input 
+                type="range" min="50" max="200" step="10" value={acidVolume} 
+                onChange={(e) => setAcidVolume(parseInt(e.target.value))}
+                disabled={hasStarted}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-500 hover:accent-blue-600 transition-all disabled:opacity-50"
+              />
+            </div>
+
+            {/* 酸濃度拉桿 */}
+            <div className="space-y-1">
+              <div className="flex justify-between items-center">
+                <label className="text-xs font-bold text-slate-500 flex items-center gap-1">
+                  <FlaskConical className="w-3 h-3"/> {t('acidConc')}
+                </label>
+                <span className={`text-sm font-bold ${hasStarted ? 'text-slate-400' : 'text-emerald-600'}`}>{acidConcentration.toFixed(1)}M</span>
+              </div>
+              <input 
+                type="range" min="0.5" max="3.0" step="0.5" value={acidConcentration} 
+                onChange={(e) => setAcidConcentration(parseFloat(e.target.value))}
+                disabled={hasStarted}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-500 hover:accent-emerald-600 transition-all disabled:opacity-50"
+              />
+            </div>
+
+            <div className="h-px bg-slate-100 my-1"></div>
+
+            {/* 表面積拉桿 (藥片磨碎程度) */}
+            <div className="space-y-1">
+              <div className="flex justify-between items-center">
+                <label className="text-xs font-bold text-slate-500 flex items-center gap-1">
+                  <Layers className="w-3 h-3"/> {t('surfaceArea')}
+                </label>
+                <span className={`text-sm font-bold ${hasStarted ? 'text-slate-400' : 'text-stone-500'}`}>
+                  {surfaceArea} <span className="text-[10px] font-normal text-slate-400">cm²/g</span>
+                </span>
+              </div>
+              <input 
+                type="range" min="1" max="100" step="1" value={surfaceArea} 
+                onChange={(e) => setSurfaceArea(parseInt(e.target.value))}
+                disabled={hasStarted}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-stone-500 hover:accent-stone-600 transition-all disabled:opacity-50"
+              />
+            </div>
+
+            {/* 攪拌速度控制 (RPM Slider) */}
+            <div className="space-y-1">
+              <div className="flex justify-between items-center">
+                <label className="text-xs font-bold text-slate-500 flex items-center gap-1">
+                  <RotateCw className={`w-3 h-3 ${stirringSpeed > 0 ? 'animate-spin' : ''}`} style={{animationDuration: stirringSpeed > 0 ? `${60/stirringSpeed}s` : '0s'}}/> {t('stirringSpeed')}
+                </label>
+                <span className={`text-sm font-bold ${hasStarted ? 'text-slate-400' : 'text-indigo-500'}`}>
+                  {stirringSpeed} <span className="text-[10px] font-normal text-slate-400">{t('rpm')}</span>
+                </span>
+              </div>
+              <input 
+                type="range" min="0" max="500" step="50" value={stirringSpeed} 
+                onChange={(e) => setStirringSpeed(parseInt(e.target.value))}
+                disabled={hasStarted}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-600 transition-all disabled:opacity-50"
+              />
+            </div>
+            
+            <div className="h-px bg-slate-100 my-1"></div>
+
+            {/* 速度控制 */}
+            <div className="space-y-1">
+               <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
+                 <FastForward className="w-3 h-3" /> {t('simSpeed')}
+               </label>
+               <div className="flex bg-slate-100 p-1 rounded-lg">
+                  {[1, 5, 10].map((s) => (
+                     <button
+                        key={s}
+                        onClick={() => setSpeed(s)}
+                        className={`flex-1 py-1 text-[10px] font-bold rounded transition-all
+                           ${speed === s 
+                              ? 'bg-white text-indigo-600 shadow-sm' 
+                              : 'text-slate-400 hover:text-slate-600'}`}
+                     >
+                        {s}x
+                     </button>
+                  ))}
+               </div>
+            </div>
+
+          </div>
+
+          {/* 底部按鈕區 */}
+          <div className="p-3 border-t border-slate-100 bg-slate-50/50 grid grid-cols-5 gap-2 shrink-0">
+             <button
+                onClick={resetSimulation}
+                disabled={isRunning}
+                className={`col-span-2 py-2 px-1 rounded-lg font-bold border transition-all flex flex-row items-center justify-center gap-2 disabled:opacity-50
+                    ${isFinished 
+                        ? 'bg-indigo-100 border-indigo-500 text-indigo-700 animate-pulse ring-2 ring-indigo-200 ring-offset-1' 
+                        : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-100'}`}
+             >
+                <RefreshCw className={`w-4 h-4 ${isFinished ? 'animate-spin-slow' : ''}`} />
+                <span className="text-sm">{t('reset')}</span>
+             </button>
+
+             <button
+                onClick={isRunning ? stopSimulation : startSimulation}
+                disabled={isFinished}
+                className={`col-span-3 py-3 rounded-lg font-bold text-base shadow-md transform transition-all flex items-center justify-center gap-2 text-white
+                  ${isFinished
+                    ? 'bg-slate-300 shadow-none cursor-not-allowed' 
+                    : isRunning 
+                        ? 'bg-slate-600 hover:bg-slate-700' 
+                        : 'bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 shadow-indigo-500/30'}`}
+              >
+                {isFinished ? (
+                    <><RefreshCw className="w-4 h-4"/> {t('resetFirst')}</>
+                ) : isRunning ? (
+                    <><Pause className="w-5 h-5 fill-current"/> {t('stop')}</>
+                ) : (
+                    <><Play className="w-5 h-5 fill-current"/> {t('start')}</>
+                )}
+              </button>
+          </div>
+        </div>
+
+        {/* 中間：實驗視覺化 */}
+        <div className="col-span-5 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col h-full relative overflow-y-auto ring-1 ring-slate-100">
+          
+          <div className="flex-1 flex items-center justify-center bg-gradient-to-b from-white via-slate-50/30 to-slate-100/50 relative min-h-[350px]">
+             
+             {speed > 1 && (
+                <div className="absolute top-4 right-4 flex items-center gap-1 text-indigo-400 font-black text-3xl select-none pointer-events-none z-0 opacity-80">
+                   <Zap className="w-6 h-6 fill-current" /> {speed}x
+                </div>
+             )}
+
+             <div className="relative w-64 h-80 z-10">
+                {/* 攪拌棒視覺效果 */}
+                {stirringSpeed > 0 && (
+                  <div className="absolute inset-0 z-30 pointer-events-none overflow-hidden">
+                     <div 
+                        className={`absolute top-[-40%] left-[50%] w-full h-[140%] origin-[50%_30%] transition-transform duration-300`}
+                        style={{
+                           // 根據 rpm 計算動畫速度，最高速時轉得很快
+                           animation: isRunning ? `stirring-rod-motion ${Math.max(0.1, 30/stirringSpeed)/Math.min(speed, 3)}s linear infinite` : 'none',
+                           transform: !isRunning ? 'rotate(15deg) translateX(30px)' : 'none'
+                        }}
+                     >
+                        <div className="absolute left-1/2 top-0 w-4 h-full bg-slate-300/40 border-x border-slate-400/30 rounded-b-full backdrop-blur-[1px] shadow-sm -translate-x-1/2">
+                           <div className="absolute top-0 left-[30%] w-[2px] h-full bg-white/50"></div>
+                           <div className="absolute top-0 right-[30%] w-[1px] h-full bg-white/30"></div>
+                        </div>
+                     </div>
+                  </div>
+                )}
+
+                <div className="absolute inset-0 border-x-[4px] border-b-[8px] border-slate-200 rounded-b-[3rem] bg-white/10 backdrop-blur-[2px] z-20 pointer-events-none shadow-inner"></div>
+                
+                <div 
+                  className="absolute bottom-2 left-2 right-2 rounded-b-[2.6rem] transition-all duration-500 ease-out z-10 overflow-hidden"
+                  style={{ 
+                    height: getLiquidHeight(), 
+                    backgroundColor: getLiquidColor(),
+                    boxShadow: 'inset 0 -10px 20px rgba(0,0,0,0.05)'
+                  }}
+                >
+                  <div className="absolute top-0 w-full h-4 bg-white/20"></div>
+                  
+                  {temperature > 60 && (
+                     <div className="absolute -top-12 w-full flex justify-center space-x-8 opacity-40">
+                        <Wind className="w-8 h-8 text-slate-300 animate-pulse" style={{ animationDuration: `${1.5/speed}s` }} />
+                     </div>
+                  )}
+
+                  {renderParticles()}
+                  
+                  {bubbles.map(b => (
+                    <div
+                        key={b.id}
+                        className="absolute rounded-full pointer-events-none"
+                        style={{
+                            left: `${b.left}%`,
+                            width: `${b.size}px`,
+                            height: `${b.size}px`,
+                            bottom: '0%', 
+                            '--wiggle-x': `${b.wiggle}px`,
+                            animation: `bubbleRise ${b.duration}s ease-in forwards`, 
+                            animationDelay: `${b.delay}s`,
+                            backgroundColor: `rgba(255, 255, 255, ${b.opacity * 0.4})`,
+                            border: '1px solid rgba(60, 80, 100, 0.4)',
+                            boxShadow: `
+                                inset 2px 2px 3px rgba(255, 255, 255, 0.9), 
+                                inset -1px -1px 3px rgba(0, 0, 0, 0.1),
+                                0 1px 2px rgba(0, 0, 0, 0.15)
+                            `,
+                            zIndex: 25 
+                        }}
+                    />
+                  ))}
+                </div>
+                
+                <div className="absolute right-0 bottom-10 w-4 h-[60%] flex flex-col justify-between opacity-30 z-20 pointer-events-none">
+                    {[...Array(6)].map((_, i) => <div key={i} className="w-full h-[1px] bg-slate-600"></div>)}
+                </div>
+             </div>
+          </div>
+
+          <div className="bg-white px-4 py-3 border-t border-slate-100 flex flex-col gap-2 shrink-0">
+             <div className="flex justify-between items-center">
+                <div className="flex items-center gap-1.5 font-mono font-bold text-xl text-slate-700 bg-slate-50 px-4 py-1 rounded border border-slate-100 w-full justify-center shadow-inner">
+                    <Timer className={`w-4 h-4 ${isRunning ? 'text-indigo-500 animate-spin' : 'text-slate-400'}`} style={{ animationDuration: isRunning ? `${2/speed}s` : '0s' }} />
+                    {currentTime.toFixed(1)}s
+                </div>
+             </div>
+             <div className="flex justify-between text-xs font-medium text-slate-500 px-2">
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-400"></span> {temperature}°C</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-400"></span> {acidVolume}ml</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> {acidConcentration}M</span>
+             </div>
+          </div>
+        </div>
+
+        {/* 右側：圖表 */}
+        <div className="col-span-4 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col h-full ring-1 ring-slate-100">
+          <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between bg-slate-50/80 shrink-0">
+            <div className="flex items-center gap-2 whitespace-nowrap overflow-hidden">
+                <BarChart3 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <h2 className="font-bold text-sm text-slate-700 truncate">{t('reactionCurve')}</h2>
+            </div>
+            
+            {/* 圖表類型切換 Tabs */}
+            <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 shrink-0">
+                <button 
+                    onClick={() => setGraphType('mass')} 
+                    className={`flex items-center justify-center gap-1 px-2 py-1 text-[10px] font-bold rounded-md transition-all ${graphType === 'mass' ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
+                    title={t('tabMass')}
+                >
+                    <div className="w-3 h-3 flex items-center justify-center font-serif italic font-black">M</div>
+                    <span className="hidden xl:inline">{t('btnMass')}</span>
+                    <span className="xl:hidden">{t('btnMass').substring(0,1)}</span>
+                </button>
+                <button 
+                    onClick={() => setGraphType('conc')} 
+                    className={`flex items-center justify-center gap-1 px-2 py-1 text-[10px] font-bold rounded-md transition-all ${graphType === 'conc' ? 'bg-white text-emerald-600 shadow-sm ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
+                    title={t('tabConc')}
+                >
+                    <FlaskConical className="w-3 h-3" />
+                    <span className="hidden xl:inline">{t('btnConc')}</span>
+                    <span className="xl:hidden">{t('btnConc').substring(0,1)}</span>
+                </button>
+                <button 
+                    onClick={() => setGraphType('temp')} 
+                    className={`flex items-center justify-center gap-1 px-2 py-1 text-[10px] font-bold rounded-md transition-all ${graphType === 'temp' ? 'bg-white text-rose-500 shadow-sm ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
+                    title={t('tabTemp')}
+                >
+                    <Thermometer className="w-3 h-3" />
+                    <span className="hidden xl:inline">{t('btnTemp')}</span>
+                    <span className="xl:hidden">{t('btnTemp').substring(0,1)}</span>
+                </button>
+            </div>
+          </div>
+
+          <div className="flex-1 relative min-h-0 w-full">
+            <div className="absolute inset-0 p-2">
+                <ResponsiveContainer width="100%" height="100%">
+                <LineChart margin={{ top: 25, right: 30, left: 0, bottom: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                    <XAxis 
+                        dataKey="time" 
+                        type="number" 
+                        domain={[0, 'dataMax']} 
+                        padding={{ right: 20 }}
+                        tickCount={6} 
+                        tick={{fontSize: 10, fill: '#94a3b8'}} 
+                        axisLine={false}
+                        tickLine={false}
+                        label={{ value: t('timeAxis'), position: 'insideBottomRight', offset: -5, fontSize: 11, fill: '#64748b' }}
+                        allowDuplicatedCategory={false}
+                    />
+                    <YAxis 
+                        domain={graphConfig.domain} 
+                        tick={{fontSize: 10, fill: '#94a3b8'}} 
+                        axisLine={false}
+                        tickLine={false}
+                        label={{ value: graphConfig.label, angle: -90, position: 'insideLeft', offset: 10, fontSize: 11, fill: '#64748b' }}
+                    />
+                    <Tooltip 
+                        contentStyle={{fontSize: '12px', borderRadius: '6px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
+                        formatter={(val, name) => [`${val}${graphConfig.unit}`, name]} 
+                        labelFormatter={(l) => `${l}s`}
+                    />
+                    <Legend verticalAlign="top" height={36} iconSize={8} wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }}/>
+                    
+                    {/* 當前實驗曲線 */}
+                    {simulationData.length > 0 && (
+                        <Line 
+                            name={t('currentRun')}
+                            data={simulationData}
+                            type="monotone" 
+                            dataKey={graphConfig.dataKey} 
+                            stroke="#4f46e5" 
+                            strokeWidth={3} 
+                            dot={false} 
+                            activeDot={{ r: 6, fill: "#4f46e5", stroke: '#fff', strokeWidth: 2 }}
+                            animationDuration={300} 
+                            isAnimationActive={speed <= 2} 
+                        />
+                    )}
+
+                    {/* 勾選的歷史紀錄曲線 */}
+                    {history.filter(h => selectedHistoryIds.includes(h.id)).map((h, index) => {
+                        const color = COMPARE_COLORS[index % COMPARE_COLORS.length];
+                        return (
+                            <Line 
+                                key={h.id}
+                                name={`${t('trial')} #${h.count}`}
+                                data={h.fullData}
+                                type="monotone" 
+                                dataKey={graphConfig.dataKey} 
+                                stroke={color} 
+                                strokeWidth={2} 
+                                dot={false} 
+                                strokeDasharray="5 5"
+                                activeDot={{ r: 4, fill: color, stroke: '#fff', strokeWidth: 1 }}
+                                isAnimationActive={false} 
+                            />
+                        );
+                    })}
+                </LineChart>
+                </ResponsiveContainer>
+            </div>
+          </div>
+          
+          <div className="px-4 py-3 border-t border-slate-100 bg-slate-50/50 shrink-0">
+             <div className="flex justify-between items-end mb-2">
+                <div>
+                   <div className="text-[10px] font-bold text-slate-400 mb-0.5">{t('massAxis')}</div>
+                   <div className="text-2xl font-bold text-slate-700 tracking-tight">
+                        {getFormattedMass()} <span className="text-xs font-normal text-slate-400">g</span>
+                   </div>
+                </div>
+                <div className="text-right">
+                   <div className="text-[10px] font-bold text-slate-400 mb-0.5">{t('progress')}</div>
+                   <div className="text-lg font-bold text-indigo-600">
+                      {(reactedAmount / INITIAL_MASS * 100).toFixed(0)}%
+                   </div>
+                </div>
+             </div>
+             <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-indigo-400 to-indigo-600 transition-all duration-300" style={{ width: `${(reactedAmount / INITIAL_MASS) * 100}%` }}></div>
+             </div>
+          </div>
+        </div>
+      </main>
+
+      {/* 底部：歷史紀錄 */}
+      <section className="h-40 bg-white border-t border-slate-200 shrink-0 flex flex-col shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.02)] z-10">
+         <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex justify-between items-center shrink-0">
+            <h3 className="text-xs font-bold text-slate-700 flex items-center gap-2">
+               <History className="w-3.5 h-3.5 text-slate-400" /> {t('history')}
+            </h3>
+            <div className="flex items-center gap-2">
+                {history.length > 0 && (
+                   <button 
+                      onClick={exportToCSV} 
+                      className="text-[10px] font-medium px-2 py-1 rounded transition-all flex items-center gap-1 duration-200 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
+                   >
+                      <Download className="w-3 h-3" /> {t('exportCSV')}
+                   </button>
+                )}
+                {history.length > 0 && (
+                   <button 
+                      onClick={handleClearAllClick} 
+                      className={`text-[10px] font-medium px-2 py-1 rounded transition-all flex items-center gap-1 duration-200
+                        ${confirmClear 
+                            ? 'bg-red-500 text-white hover:bg-red-600 ring-2 ring-red-200' 
+                            : 'text-red-500 hover:text-red-700 hover:bg-red-50'}`}
+                   >
+                      {confirmClear ? (
+                          <><AlertCircle className="w-3 h-3" /> {t('confirmClear')}</>
+                      ) : (
+                          <><Trash2 className="w-3 h-3" /> {t('clearAll')}</>
+                      )}
+                   </button>
+                )}
+            </div>
+         </div>
+         <div className="flex-1 overflow-auto">
+            <table className="w-full text-left border-collapse">
+               <thead className="bg-white sticky top-0 z-10 shadow-sm">
+                  <tr className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                     <th className="py-2 px-3 w-14 text-center whitespace-nowrap">{t('colCount')}</th>
+                     <th className="py-2 px-3">{t('colTemp')}</th>
+                     <th className="py-2 px-3">{t('colVol')}</th>
+                     <th className="py-2 px-3">{t('colConc')}</th>
+                     <th className="py-2 px-3">{t('colArea')}</th>
+                     <th className="py-2 px-3">{t('colStir')}</th>
+                     <th className="py-2 px-3 text-right">{t('colTime')}</th>
+                     <th className="py-2 px-3 text-right">{t('colRate')}</th>
+                     <th className="py-2 px-3 text-center w-20">{t('colSelect')}</th>
+                     <th className="py-2 px-3 text-center w-16">{t('colAction')}</th>
+                  </tr>
+               </thead>
+               <tbody className="text-xs divide-y divide-slate-50">
+                  {history.map((r, index) => {
+                     const isSelected = selectedHistoryIds.includes(r.id);
+                     // 取得對應的顏色
+                     const rowColor = isSelected 
+                        ? COMPARE_COLORS[history.filter(h => selectedHistoryIds.includes(h.id)).findIndex(h => h.id === r.id) % COMPARE_COLORS.length] 
+                        : 'transparent';
+
+                     return (
+                     <tr 
+                        key={r.id} 
+                        className={`transition-colors group hover:bg-slate-50`}
+                     >
+                        <td className="py-2 px-3 text-center font-bold text-slate-400 font-mono">
+                            {r.count}
+                        </td>
+                        <td className="py-2 px-3 text-slate-600 font-medium">{r.temp}°C</td>
+                        <td className="py-2 px-3 text-blue-600 font-medium">{r.vol}ml</td>
+                        <td className="py-2 px-3 text-emerald-600 font-medium">{r.conc}M</td>
+                        <td className="py-2 px-3">
+                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold bg-stone-100 text-stone-600`}>
+                              {r.area} cm²/g
+                           </span>
+                        </td>
+                        <td className="py-2 px-3 text-slate-500">{r.stir} rpm</td>
+                        <td className="py-2 px-3 text-right font-bold text-indigo-600 font-mono">{r.time}s</td>
+                        <td className="py-2 px-3 text-right font-bold text-orange-500 font-mono">
+                            {getRateDisplay(r)}
+                        </td>
+                        <td className="py-2 px-3 text-center">
+                           <button 
+                              onClick={() => toggleHistorySelection(r.id)}
+                              className={`p-1 rounded transition-all flex items-center justify-center w-full
+                                ${isSelected ? 'bg-slate-100 text-slate-700' : 'text-slate-300 hover:text-slate-500'}`}
+                           >
+                              {isSelected ? (
+                                  <div className="flex items-center gap-1">
+                                      <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: rowColor }}></div>
+                                      <CheckSquare className="w-4 h-4" />
+                                  </div>
+                              ) : (
+                                  <Square className="w-4 h-4" />
+                              )}
+                           </button>
+                        </td>
+                        <td className="py-2 px-3 text-center">
+                           <button 
+                              onClick={(e) => deleteHistoryItem(r.id, e)}
+                              className="text-slate-300 hover:text-red-500 hover:bg-red-50 p-1.5 rounded transition-all"
+                              title="Delete"
+                           >
+                              <X className="w-3.5 h-3.5" />
+                           </button>
+                        </td>
+                     </tr>
+                  )})}
+                  {history.length === 0 && (
+                     <tr><td colSpan="10" className="text-center py-8 text-slate-300 text-[10px] font-medium">{t('noRecords')}</td></tr>
+                  )}
+               </tbody>
+            </table>
+         </div>
+      </section>
+
+      <style>{`
+        @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .animate-spin-slow { animation: spin-slow 0.8s linear infinite; }
+        
+        @keyframes stirring-rod-motion {
+          0% { transform: rotate(15deg) translateX(30px) translateY(0); }
+          25% { transform: rotate(10deg) translateX(0) translateY(5px); }
+          50% { transform: rotate(-15deg) translateX(-30px) translateY(0); }
+          75% { transform: rotate(-10deg) translateX(0) translateY(-5px); }
+          100% { transform: rotate(15deg) translateX(30px) translateY(0); }
+        }
+
+        @keyframes swirl {
+          0% { transform: translate(calc(var(--swirl-radius) * 1), var(--swirl-y)); z-index: 10; }
+          25% { transform: translate(0, calc(var(--swirl-y) + 10px)) scale(0.9); z-index: 5; }
+          50% { transform: translate(calc(var(--swirl-radius) * -1), var(--swirl-y)); z-index: 0; }
+          75% { transform: translate(0, calc(var(--swirl-y) - 10px)) scale(1.1); z-index: 15; }
+          100% { transform: translate(calc(var(--swirl-radius) * 1), var(--swirl-y)); z-index: 10; }
+        }
+
+        @keyframes bubbleRise {
+          0% { transform: translateY(0) translateX(0) scale(0.5); opacity: 0; }
+          10% { opacity: 1; }
+          100% { transform: translateY(-400px) translateX(var(--wiggle-x)) scale(1.2); opacity: 0; }
+        }
+      `}</style>
+    </div>
+  );
+}
